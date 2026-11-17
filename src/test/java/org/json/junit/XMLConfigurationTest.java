@@ -35,6 +35,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Reader;
 import java.io.StringReader;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -43,6 +44,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.json.XML;
 import org.json.XMLParserConfiguration;
+import org.json.XMLXsiTypeConverter;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -1070,6 +1072,84 @@ public class XMLConfigurationTest {
         JSONObject expetedJsonObject = new JSONObject(expectedStr);
 
         Util.compareActualVsExpectedJsonObjects(jsonObject, expetedJsonObject);
+    }
+
+    @Test
+    public void testMaxNestingDepthIsSet() {
+        XMLParserConfiguration xmlParserConfiguration = XMLParserConfiguration.ORIGINAL;
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(42);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), 42);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(0);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), 0);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(-31415926);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), XMLParserConfiguration.UNDEFINED_MAXIMUM_NESTING_DEPTH);
+
+        xmlParserConfiguration = xmlParserConfiguration.withMaxNestingDepth(Integer.MIN_VALUE);
+
+        assertEquals(xmlParserConfiguration.getMaxNestingDepth(), XMLParserConfiguration.UNDEFINED_MAXIMUM_NESTING_DEPTH);
+    }
+
+    @Test
+    public void testMaxNestingDepthSurvivesFurtherConfiguration() {
+        XMLParserConfiguration xmlParserConfiguration = XMLParserConfiguration.ORIGINAL
+            .withMaxNestingDepth(42)
+            .withKeepStrings(true)
+            .withcDataTagName("altContent")
+            .withConvertNilAttributeToNull(true)
+            .withXsiTypeMap(new HashMap<String, XMLXsiTypeConverter<?>>())
+            .withForceList(new HashSet<String>());
+
+        assertEquals(42, xmlParserConfiguration.getMaxNestingDepth());
+        assertEquals(XMLParserConfiguration.DEFAULT_MAXIMUM_NESTING_DEPTH,
+            XMLParserConfiguration.KEEP_STRINGS.getMaxNestingDepth());
+    }
+
+    @Test
+    public void testMaxNestingDepthIsEnforcedAfterFurtherConfiguration() {
+        final String wayTooLongMalformedXML = new String(new char[6000]).replace("\0", "<a>");
+        final XMLParserConfiguration config = XMLParserConfiguration.ORIGINAL
+            .withMaxNestingDepth(42)
+            .withKeepStrings(true);
+
+        try {
+            XML.toJSONObject(wayTooLongMalformedXML, config);
+
+            fail("Expecting a JSONException");
+        } catch (JSONException e) {
+            assertTrue("Wrong throwable thrown: not expecting message <" + e.getMessage() + ">",
+                e.getMessage().startsWith("Maximum nesting depth of 42"));
+        }
+    }
+
+    @Test
+    public void testUndefinedMaxNestingDepthAllowsDeeplyNestedXML() {
+        final int depth = 1000;
+        final String nestedXML = new String(new char[depth]).replace("\0", "<a>")
+            + "value" + new String(new char[depth]).replace("\0", "</a>");
+        final XMLParserConfiguration config = XMLParserConfiguration.ORIGINAL
+            .withMaxNestingDepth(XMLParserConfiguration.UNDEFINED_MAXIMUM_NESTING_DEPTH);
+
+        final JSONObject[] parsed = new JSONObject[1];
+        Throwable thrown = Util.throwableFromLargeStack(new Runnable() {
+            @Override
+            public void run() {
+                parsed[0] = XML.toJSONObject(nestedXML, config);
+            }
+        });
+        if (thrown != null) {
+            thrown.printStackTrace();
+            fail("Unexpected throwable: " + thrown);
+        }
+        assertTrue("Expected the deeply nested document to be parsed",
+            parsed[0] != null && parsed[0].has("a"));
     }
     
     /**
